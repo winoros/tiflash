@@ -39,6 +39,7 @@
 #include <ext/scope_guard.h>
 #include <magic_enum.hpp>
 #include <map>
+#include "common/logger_useful.h"
 
 namespace DB
 {
@@ -267,6 +268,11 @@ void MPPTask::prepare(const mpp::DispatchTaskRequest & task_request)
     // If there's no 
     if (dag_req.root_executor().exchange_sender().encoded_task_meta_size() == 0)
         prepareUpstreamTaskForCTE();
+    LOG_DEBUG(
+        log,
+        "After preparing the DAG request, the num of the upstream task is {}, current task is {}",
+        dag_req.root_executor().exchange_sender().encoded_task_meta_size(),
+        meta.task_id());
     TMTContext & tmt_context = context->getTMTContext();
     /// MPP task will only use key ranges in mpp::DispatchTaskRequest::regions/mpp::DispatchTaskRequest::table_regions.
     /// The ones defined in tipb::TableScan will never be used and can be removed later.
@@ -350,7 +356,7 @@ void MPPTask::prepareUpstreamTaskForCTE()
             mpp::TaskMeta task_meta;
             if (unlikely(!task_meta.ParseFromString(task)))
                 throw TiFlashException("Failed to decode task meta info in ExchangeSender", Errors::Coprocessor::BadRequest);
-            if (meta.address() == task_meta.address())
+            if (meta.address() != task_meta.address())
                 continue;
             dag_req.mutable_root_executor()->mutable_exchange_sender()->add_encoded_task_meta(task);
         }
