@@ -169,7 +169,7 @@ void MPPTask::registerTunnels(const mpp::DispatchTaskRequest & task_request)
         bool is_async = !is_local && context->getSettingsRef().enable_async_server;
         MPPTunnelPtr tunnel = std::make_shared<MPPTunnel>(task_meta, task_request.meta(), timeout, context->getSettingsRef().max_threads, is_local, is_async, log->identifier());
 
-        LOG_DEBUG(log, "begin to register the tunnel {}, is_local: {}, is_async: {}", tunnel->id(), is_local, is_async);
+        LOG_DEBUG(log, "begin to register the tunnel {}, is_local: {}, is_async: {}, from task {} to task {}", tunnel->id(), is_local, is_async, meta.task_id(), task_meta.task_id());
 
         if (status != INITIALIZING)
             throw Exception(fmt::format("The tunnel {} can not be registered, because the task is not in initializing state", tunnel->id()));
@@ -264,6 +264,9 @@ void MPPTask::unregisterTask()
 void MPPTask::prepare(const mpp::DispatchTaskRequest & task_request)
 {
     dag_req = getDAGRequestFromStringWithRetry(task_request.encoded_plan());
+    // If there's no 
+    if (dag_req.root_executor().exchange_sender().encoded_task_meta_size() == 0)
+        prepareUpstreamTaskForCTE();
     TMTContext & tmt_context = context->getTMTContext();
     /// MPP task will only use key ranges in mpp::DispatchTaskRequest::regions/mpp::DispatchTaskRequest::table_regions.
     /// The ones defined in tipb::TableScan will never be used and can be removed later.
@@ -335,6 +338,23 @@ void MPPTask::prepare(const mpp::DispatchTaskRequest & task_request)
 
     mpp_task_statistics.initializeExecutorDAG(dag_context.get());
     mpp_task_statistics.logTracingJson();
+}
+
+void MPPTask::prepareUpstreamTaskForCTE() 
+{
+    auto cte_readers = dag_req.root_executor().exchange_sender().upstream_cte_task_meta();
+    for (auto & tasks_for_one_reader : cte_readers) 
+    {
+        for (const auto & task : tasks_for_one_reader.encoded_tasks()) 
+        {
+            mpp::TaskMeta task_meta;
+            if (unlikely(!task_meta.ParseFromString(task)))
+                throw TiFlashException("Failed to decode task meta info in ExchangeSender", Errors::Coprocessor::BadRequest);
+            if (meta.address() == task_meta.address())
+                continue;
+            dag_req.mutable_root_executor()->mutable_exchange_sender()->add_encoded_task_meta(task);
+        }
+    }
 }
 
 void MPPTask::preprocess()

@@ -69,6 +69,8 @@ public:
 
     void prepare(const mpp::DispatchTaskRequest & task_request);
 
+    void prepareUpstreamTaskForCTE();
+
     void run();
 
     bool scheduleThisTask(ScheduleState state);
